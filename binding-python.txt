@@ -1,0 +1,229 @@
+# binding-python v0.4
+
+parent: coding-rules-master v0.4. Load this file WITH the master; this file
+supplies mechanism and idiom, the master supplies the obligation. Every
+CR-token from the master appears below or in not_applicable.
+
+Target: Python 3.12+, fully typed, mypy --strict clean.
+
+## Toolchain (the [auto] promotions)
+
+mypy --strict (disallow_untyped_defs, disallow_any_explicit where
+feasible, warn_return_any, strict_equality)                    → CR-2.1 CR-2.2
+ruff with rule groups:
+  E722 (no bare except)                                        → CR-2.10
+  B (bugbear), BLE (blind-except)                              → CR-2.10 CR-4.x
+  S (bandit security rules)                                    → CR-8.x support
+  UP (pyupgrade), I (import order)                             → CR-5.6
+  T20 (no print)                                               → CR-5.4
+  DTZ (no naive datetime)                                      → CR-5.1
+  PTH (pathlib over os.path)                                   → CR-8.6 support
+  ERA (no commented-out code)                                  → CR-5.3
+uv with committed uv.lock; `uv sync --locked` in CI            → CR-5.5
+pytest; freezegun/injected clock; seeded random                → CR-3.11
+
+Rules promoted above are [auto]; a red linter is the violation. Everything
+else below is [review].
+
+## Bindings (mechanism + idiom per master rule)
+
+Architecture:
+- CR-1.1 CR-1.2 CR-1.3 CR-1.5 CR-1.7 CR-1.10 as stated in master.
+- CR-1.4: no import-time side effects; no mutable module globals; no
+  singletons hidden behind module state; circular imports are a design
+  defect, not a `# noqa` candidate.
+- CR-1.6: constructor injection; dependency contracts are `Protocol`
+  classes (structural, no inheritance needed); a one-method dependency is
+  a `Callable[...]`.
+- CR-1.8: `__init__` does no IO; use `@classmethod async def create()`
+  or a module-level factory.
+- CR-1.9: behavior lives in classes; data is `@dataclass(frozen=True,
+  slots=True)` records with closed variants per CR-2.13.
+
+Types:
+- CR-2.3: every `cast()` and every `# type: ignore[code]` carries a
+  justifying comment; bare `# type: ignore` without an error code is
+  banned.
+- CR-2.4: no laundering through `cast(Any, x)` then to a target type, and
+  no json round-trip to strip types.
+- CR-2.5: the absence-suppression forms are `assert x is not None` and
+  `cast(T, x)` — each requires a justifying comment or an immediately
+  preceding runtime check that raises.
+- CR-2.6: external data enters as `object`/bytes, is validated at the
+  boundary (pydantic), and crosses inward as domain types.
+- CR-2.7: closed sets are `Literal[...]` unions or `enum.Enum`
+  (StrEnum for wire values); no magic strings where a Literal exists.
+- CR-2.8: pydantic models are boundary-only; the domain layer imports
+  dataclasses/attrs, never pydantic.
+- CR-2.9: public functions carry full annotations [auto: mypy
+  disallow_untyped_defs]; no untyped `**kwargs` pass-through on public
+  surfaces.
+- CR-2.10: `except` clauses name concrete exception types [auto: E722,
+  BLE]; never swallow — log, re-raise, or convert; `raise ... from e` to
+  preserve the chain.
+- CR-2.11: no `None` return where an error belongs; `Optional` means
+  intentional absence. "Not found" is either a domain question
+  (return None, name the function `find_*`) or an error (raise
+  NotFoundError, name it `get_*`) — pick per call-site semantics, never
+  both.
+- CR-2.12: `@dataclass(frozen=True)` for records, `Final` for constants,
+  tuples over lists at boundaries. FLOOR DEVIATION (see below): checker-
+  level, not runtime-level enforcement.
+- CR-2.13: closed variants are a union of frozen dataclasses discriminated
+  by a `Literal` tag field (or by type), `Union[A, B, C]` declared in one
+  place.
+- CR-2.14: `match` over the union with `case _ as unreachable:
+  assert_never(unreachable)` — mypy proves exhaustiveness at check time.
+- CR-2.15: failure taxonomy binds to typed exceptions — the native
+  mechanism: each module/domain defines a small exception hierarchy rooted
+  in one base (`class StorageError(Exception)`), raised with context,
+  caught NARROWLY at the layer that can act; public functions document
+  their raisable set in the docstring `Raises:` section. Programmer errors
+  and violated invariants raise `AssertionError`/`RuntimeError` and crash.
+  Wrapping a bug in a domain exception is as wrong as letting a
+  recoverable failure escape untyped. (Result libraries are NOT used —
+  they fight the ecosystem; the invariant is carried by the hierarchy +
+  narrow catches + documented raise sets.)
+- CR-2.16: types derive from schemas — pydantic models ARE the schema and
+  the type in one declaration at the boundary; generated clients
+  (openapi-python-client, sqlc-gen equivalents) over hand-written
+  mirrors; no blind `json.loads` then attribute-poking.
+- CR-2.17: boundary shapes are named models/dataclasses; derived shapes
+  via pydantic `model_construct` subsets or explicit converters, never
+  field-by-field duplication.
+- CR-2.18: every task is awaited or gathered; `asyncio.TaskGroup` (3.11+)
+  is the default — it joins and propagates; a bare
+  `asyncio.create_task` without a kept reference and a done-callback is a
+  defect (the task can be garbage-collected mid-flight).
+- CR-2.19: snake_case functions/variables, PascalCase classes,
+  UPPER_SNAKE constants; boolean prefix is_/has_/can_/should_.
+
+Testing — CR-3.1 CR-3.2 CR-3.3 CR-3.4 CR-3.5 CR-3.6 CR-3.7 CR-3.8 CR-3.9
+CR-3.10 CR-3.12 as stated in master (proof line applies verbatim).
+- CR-3.11: injected clock or freezegun; `random.Random(seed)` instances,
+  never the module-global; no real network (pytest-socket to enforce);
+  no `time.sleep` synchronization.
+
+IO & resilience:
+- CR-4.1: httpx with explicit `timeout=` (connect+read); subprocess with
+  `timeout=`; never requests without a timeout (it defaults to none).
+- CR-4.2 CR-4.3 CR-4.4 as stated; boundary validation is pydantic
+  `model_validate` with `extra='forbid'` at strict boundaries.
+- CR-4.5: `random.random() * min(base * 2 ** n, max_backoff)`; policy
+  names attempts, backoff, retryable exception classes.
+- CR-4.6 [advisory] as stated.
+- CR-4.7: resources are context managers — `with`/`async with`;
+  multi-resource paths use `contextlib.ExitStack`; cancellation is
+  `asyncio.timeout()` scopes and honored `CancelledError` (re-raise it,
+  never swallow); acquisition and release same scope by construction.
+- CR-4.8: `asyncio.gather(return_exceptions=...)` — the flag IS the
+  recorded fail-fast vs collect-all decision; `TaskGroup` = fail-fast.
+
+Runtime mechanics:
+- CR-5.1: aware datetimes only, `datetime.now(tz=UTC)` [auto: DTZ];
+  `time.monotonic()` for durations; suffixes timeout_s / ttl_seconds.
+- CR-5.2: `decimal.Decimal` for money (int minor units in storage);
+  `math.isfinite` at float boundaries; Python ints are arbitrary
+  precision — the 2^53 hazard applies only at JSON/JS boundaries, where
+  large ints serialize as strings.
+- CR-5.3 as stated [ERA backs the commented-out-code half].
+- CR-5.4: `logging`/structlog, configured once at entry; stderr in CLIs;
+  no `print` in committed code [auto: T20].
+- CR-5.5: uv.lock committed, `uv sync --locked` in CI; new dependency
+  carries a one-sentence justification; prefer stdlib.
+- CR-5.6: absolute imports only; import order stdlib/external/local
+  [auto: I]; no wildcard imports; `__init__.py` exports the public
+  surface, nothing reaches into private modules.
+
+Service layer — CR-6.1 CR-6.2 CR-6.3 CR-6.4 CR-6.5 CR-6.8 CR-6.9 CR-6.10
+CR-6.11 as stated in master (FastAPI assumed where a framework is named):
+- CR-6.2: response models declared on the route (`response_model=`).
+- CR-6.3: exception handlers registered once on the app; handlers raise
+  domain exceptions, the mapping layer converts.
+- CR-6.4: `Depends()` for cross-cutting concerns.
+- CR-6.6: bounded `asyncio.Queue(maxsize=n)`; the policy is explicit at
+  every put site — `await put` = backpressure; `put_nowait` +
+  `QueueFull` handler = reject or drop (counted); maxsize and policy are
+  parameters, not literals.
+- CR-6.7: no blocking IO in `async def` — no requests, no time.sleep, no
+  blocking DB driver; blocking work goes through
+  `asyncio.to_thread`/executor; sync variants are CLI-only.
+- CR-6.11: CAS in the store's write predicate; process-level locks do not
+  survive multiple workers — the database owns the race.
+
+Data access — CR-7.1 CR-7.2 CR-7.3 CR-7.4 CR-7.5 CR-7.6 CR-7.7 as stated:
+- CR-7.1: parameterized via the driver (psycopg/asyncpg/SQLAlchemy Core);
+  f-strings never touch SQL.
+- CR-7.7: `tempfile.NamedTemporaryFile(dir=target_dir, delete=False)` →
+  write → `os.fsync(f.fileno())` → close → `os.replace` (atomic,
+  cross-platform).
+
+Security — CR-8.1 CR-8.2 CR-8.3 CR-8.4 CR-8.5 CR-8.9 as stated [S rules
+back several]:
+- CR-8.6: `Path.resolve()` then `resolved.relative_to(allowed_root)`
+  (raises = refuse); tarfile extraction with `filter='data'` (3.12+),
+  zip entries validated per entry.
+- CR-8.7: `subprocess.run([cmd, *args])` — list form always;
+  `shell=True` with external data is banned [auto: S602].
+- CR-8.8: parse with urllib, allowlist scheme+host, resolve and refuse
+  loopback/link-local/metadata/private ranges before request.
+- CR-8.9: `hmac.compare_digest` for signature comparison.
+
+Observability — CR-9.1 CR-9.2 CR-9.3 CR-9.4 as stated; correlation ID via
+`contextvars.ContextVar`, bound into the logger once.
+Versioning — CR-10.1 CR-10.2 CR-10.3 as stated.
+Hygiene — CR-11.1 CR-11.2 as stated; shutdown = signal handler sets an
+event → stop intake → drain with deadline → close (uvicorn/asyncio
+lifespan hooks where framed).
+CLI — CR-12.1 CR-12.2 CR-12.3 CR-12.4 CR-12.5 as stated:
+- CR-12.3: `sys.stdin.isatty()` gates prompts.
+- exit-code table is a `Final` mapping (CR-2.7); `raise SystemExit(code)`
+  from one place in `main()`.
+
+Generation density — CR-13.2 CR-13.5 as stated in master:
+- CR-13.1 idiom: no ABC or `Protocol` with exactly one implementation
+  outside declared ports (CR-1.6 Protocols); no wrapper module that only
+  re-imports; no `get_x()` accessor over a plain attribute; no one-caller
+  helper that names nothing the call site doesn't.
+- CR-13.3 idiom: no try/except around code whose documented raise set is
+  empty (CR-2.15 owns the raise-set discipline); no `is not None` guard
+  on a non-Optional parameter (CR-2.5 prices the assert form); no
+  pydantic re-validation inward of the boundary that validated (CR-4.3).
+- CR-13.4 exemplar: EXEMPLAR SLOT — name at least one reference file from
+  YOUR codebase and anchor density review on it; until one is named,
+  record the gap as OWED per CR-13.4 and anchor on the master rule text
+  alone.
+
+PostgreSQL — CR-P.1 CR-P.2 CR-P.3 as stated (asyncpg/psycopg return aware
+datetimes for timestamptz).
+
+## Language-only rules
+
+- L-1 [review] No mutable default arguments; default is `None` +
+  construct inside, or a frozen sentinel [auto: B006].
+- L-2 [review] Comprehensions over accumulation loops when they stay
+  single-clause and readable; never nested past two clauses.
+- L-3 [review] `if __name__ == "__main__":` guards every executable
+  module; import must be side-effect free (CR-1.4's import face).
+- L-4 [review] Concurrency model is a per-project recorded decision:
+  asyncio OR threads OR processes per workload class; do not mix models
+  in one code path without an explicit bridge (`to_thread`, executor).
+
+## Floor deviations (recorded — accepted 2026-07-02)
+
+- CR-2.12 immutability: frozen dataclasses and Final are mypy-checked,
+  not runtime-enforced; a determined caller can `object.__setattr__`.
+  Checker-level floor; recorded, not papered over.
+- CR-2.1 strictness: mypy --strict is opt-in per file tree; untyped
+  third-party stubs create `Any` leaks at edges — contain with typed
+  wrapper modules at the boundary.
+- CR-2.15 mechanism: typed exceptions, not Result — the raisable set is
+  documented convention (docstring `Raises:`), not compiler-verified.
+  Weaker visibility than TS Result / Go error returns; compensated by
+  narrow catches [auto: E722/BLE] and the exception-hierarchy-per-module
+  rule.
+
+## not_applicable
+
+(none — every master rule binds in Python; CR-6.7 binds with full force,
+the event loop is exactly the starvable resource the rule protects)

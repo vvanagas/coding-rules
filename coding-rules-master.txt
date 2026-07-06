@@ -1,0 +1,438 @@
+# coding-rules-master v0.4
+
+Language-neutral coding obligations for production code written by (or
+with) coding agents. Extracted from a TypeScript-specific ruleset by
+pulling out the neutral core; language mechanics live in the bindings.
+
+This file states WHAT is owed. Per-language bindings beside it state HOW,
+in fully native idiom:
+  binding-typescript.txt   binding-go.txt   binding-python.txt
+  binding-php.txt
+
+An agent writing code loads THIS file plus exactly one binding. The binding
+wins on mechanism; this file wins on obligation. A conflict between them is
+a defect in the binding. A language with no binding runs master-only (see
+No-binding fallback under Enforcement model).
+
+## Enforcement model
+
+Rules here carry [review] (binding; human judgment) or [advisory]
+(recommended, skippable). There is no [auto] in this file: [auto] is a
+binding-level promotion — a binding may promote any rule to
+[auto: <named mechanism>]; an [auto] tag that names no mechanism is invalid
+and reads as [review].
+
+A `proof:` line names required evidence. For those rules, narrated
+compliance counts as non-compliance.
+
+No-binding fallback: a language with no binding beside this file runs
+against this file alone. Without a binding there are no [auto] promotions:
+every rule reads at its tag here ([review]/[advisory]), and mechanisms
+named in other languages' toolchains are inapplicable — enforce the stated
+principle by judgment. Track the bindings you owe here per the OWED
+convention: a language in production without a binding is a recorded gap,
+never a silent one.
+
+Mirror note: the Iron Law (CR-3.1–3.4, plus CR-3.6), secrets (CR-8.5), and
+idempotency (CR-4.4–4.5) are worth pinning as always-on invariants in your
+agent's persistent instructions (CLAUDE.md / AGENTS.md equivalent), so
+they hold even when this ruleset is not loaded. An edit to any of them lands in both places
+in the same change.
+
+Fast path: full discipline applies to changes in production behavior.
+Exempt from design scrutiny (never from the linters): docs and comments,
+renames, formatting, test-only changes, dependency bumps without API change.
+
+Scope ladder:
+  one-off script / prototype     §0 + your binding's toolchain block
+  small reusable tool            §0, §12 if CLI, plus touched sections
+  production service / library   the whole file + your binding
+
+## Projection check
+
+Every binding file must contain every `CR-` token defined in this file —
+either bound inline or listed in its `not_applicable` block with a reason.
+Mechanical check on every master bump:
+
+  grep -oE 'CR-[0-9]+\.[0-9]+' coding-rules-master.txt | sort -u > /tmp/m
+  grep -oE 'CR-[0-9]+\.[0-9]+' binding-<lang>.txt      | sort -u > /tmp/b
+  diff /tmp/m /tmp/b        # must be empty
+
+A binding that fails this check is stale and must not be injected.
+
+## 0. Minimum set
+
+The rules that pay for themselves even in a 200-line tool:
+
+  CR-4.3         validate all external data at the boundary
+  CR-2.13, 2.14  closed variants + exhaustive handling
+  CR-2.15        recoverable failures are typed; bugs crash loudly
+  CR-6.6         every accumulator has a bound AND a named overflow behavior
+  CR-4.7         every acquired resource has a paired release on every exit path
+  CR-7.7         file writes are atomic (temp + fsync + rename)
+  CR-8.5         no secret in code, logs, output, or history
+  CR-12.1, 12.2  exit codes are a contract; stdout carries data only (CLI)
+
+proof (agent-executed changes): §0 compliance is evidenced, not narrated —
+type checker and linter output green, plus the captured failing-then-passing
+test output for any behavior change (see §3 proof).
+
+## 1. Architecture & Layering
+
+- CR-1.1 [review] Layer direction is one-directional: entry/handler →
+  service → data-access → persistence. No layer reaches around another.
+- CR-1.2 [review] Business logic performs no IO, reads no environment,
+  mutates no module/package-level state. Decisions needing current time,
+  feature flags, or auth context receive them as injected values or
+  interfaces (CR-1.6); core decision code is deterministic given its inputs.
+- CR-1.3 [review] Core functions are pure: data in, data out. Raw external
+  payloads never reach core logic — validate at the boundary (CR-4.3).
+- CR-1.4 [review] No mutable module/package-level state, no hidden
+  singletons, no side effects at import/init time, no circular or
+  cross-layer imports.
+- CR-1.5 [review] Configuration is accessed only via a settings module,
+  read once at startup; missing or malformed config fails loudly at startup
+  with an actionable message.
+- CR-1.6 [review] Dependencies are injected at construction. External
+  dependencies (DB, HTTP, queue, LLM, filesystem, clock) sit behind interfaces;
+  depend on the interface, inject the implementation. A one-method
+  dependency is a function — inject the function.
+- CR-1.7 [review] Per-operation mutable state lives in a per-operation
+  object, never on a shared service instance.
+- CR-1.8 [review] No IO or async work in constructors; use a factory.
+- CR-1.9 [review] Objects with identity and behavior may be classes/structs
+  with methods; data is plain immutable records with closed variants.
+- CR-1.10 [review] Persistence is touched only in the data-access layer,
+  which returns domain objects and contains no business branching.
+
+## 2. Types & Data Discipline
+
+- CR-2.1 [review] The language's strictest practical static-checking
+  configuration is on; the binding names it. Weakening a strictness flag is
+  a recorded decision.
+- CR-2.2 [review] No unrestricted dynamic type as an escape hatch; the
+  binding names the banned forms.
+- CR-2.3 [review] Every type-system escape (unchecked cast, unsafe
+  conversion, checker suppression) carries a justifying comment or a runtime
+  check immediately before it.
+- CR-2.4 [review] No laundering a cast through an intermediate type to
+  defeat the checker.
+- CR-2.5 [review] No null/absence-suppression assertion without a
+  justifying comment.
+- CR-2.6 [review] External data enters as untyped/unknown and is narrowed
+  at the boundary where it enters.
+- CR-2.7 [review] Closed value sets use the language's closed-set idiom; no
+  magic strings or numbers where a declared closed set should exist.
+- CR-2.8 [review] Domain types are separate from transport/validation
+  types; the domain layer never imports the validation library.
+- CR-2.9 [review] Exported/public functions declare explicit signatures —
+  parameter and return types visible at the boundary.
+- CR-2.10 [review] Handled failures are narrowed to a concrete type before
+  use; a failure is never swallowed silently — log, rethrow/return, or
+  convert.
+- CR-2.11 [review] No null/absent return where an error belongs. Optional
+  types mean intentional absence, not "unset".
+- CR-2.12 [review] Immutability is the default wherever the language can
+  express it; shared mutable state is minimized and its owner named. The
+  binding records the enforcement floor honestly.
+- CR-2.13 [review] Mutually exclusive states are closed variants with a
+  discriminating tag. No parallel boolean flags.
+- CR-2.14 [review] Handling of closed variants is exhaustive, with the
+  strongest compiler/linter check the language offers; the residual branch
+  is a reachable-only-by-bug assertion.
+- CR-2.15 [review] Failure taxonomy — this rule owns it: recoverable
+  failures are TYPED and VISIBLE at the call boundary, in the language's
+  native mechanism (typed error values, Result, or a typed exception
+  hierarchy — the binding chooses ONE and says which). Programmer errors
+  and violated invariants crash loudly. Wrapping a bug in a recoverable
+  type is as wrong as crashing on a recoverable failure.
+- CR-2.16 [review] Types derive from schemas where schemas exist; never a
+  schema and its type declared separately; never a blind parse-then-cast.
+- CR-2.17 [review] Boundary shapes get named types; related shapes are
+  derived, never hand-duplicated field by field.
+- CR-2.18 [review] No unobserved concurrent failure: every concurrent
+  task's outcome is awaited, joined, collected, or explicitly discarded
+  with a comment. A fire-and-forget failure that vanishes is a defect.
+- CR-2.19 [review] Naming follows the binding's casing conventions;
+  booleans carry a positive assertion prefix (is/has/can/should
+  equivalents).
+
+## 3. Testing / TDD
+
+- CR-3.1 [review] No production code without a failing test first.
+- CR-3.2 [review] Watching the test fail is mandatory. A test that passed
+  the first time it ran proves nothing; make it fail for the right reason
+  first.
+- CR-3.3 [review] The failure must be for the *right reason* — the asserted
+  behavior, not a typo, import error, or unrelated exception.
+- CR-3.4 [review] Code written before its failing test is deleted, not
+  adapted, not kept "for reference". Delete means delete; start over
+  test-first.
+- proof (CR-3.1–3.4): the failing run's output and the subsequent passing
+  run's output are captured in the task record. No captured RED output
+  means these rules were not followed, whatever the narration says.
+- CR-3.5 [review] Bug fixes start with a regression test that fails for the
+  right reason and reproduces the reported defect.
+- CR-3.6 [review] No horizontal slicing. Each task decomposes into vertical
+  RED→GREEN slices, one behavior per slice. Refactor only when GREEN.
+- CR-3.7 [review] Tests verify behavior through public interfaces. A test
+  that breaks on a behavior-preserving rename is testing structure —
+  rewrite it.
+- CR-3.8 [review] Assertions are on observable behavior, never on mock
+  call records as a proxy for behavior.
+- CR-3.9 [review] Mocks only at true external boundaries: network, clock,
+  filesystem edges. Internal collaborators are real. Do not mock what you
+  do not own.
+- CR-3.10 [review] Test names describe behavior (WHAT), not mechanism
+  (HOW). Test data is explicit; fixtures are named for what they represent.
+  Error and exception paths are tested, not only the happy path; domain
+  failures are tested as mapped to their result/status codes (CR-6.3).
+- CR-3.11 [review] Deterministic tests: fake/injected clocks, seeded
+  randomness, no real network, no sleep-based synchronization.
+- CR-3.12 [review] Unit tests for domain logic; integration tests for
+  data-access against a real store; end-to-end for the request lifecycle.
+
+## 4. IO, Boundaries & Resilience
+
+- CR-4.1 [review] Every external / network / subprocess call defines a
+  connect timeout and a read timeout, or documents why blocking is
+  acceptable.
+- CR-4.2 [review] Every IO call defines explicit failure behavior and what
+  the caller receives.
+- CR-4.3 [review] All external data — subprocess output, user input,
+  parsed files, network responses — is untrusted until validated by a
+  schema at the boundary. This is the single boundary-validation rule;
+  §1.3, §5, §7, §8 defer to it.
+- CR-4.4 [review] Retrying a non-idempotent operation is a correctness bug.
+- CR-4.5 [review] Retries use full jitter: random() * min(base * 2^n, max);
+  a retry policy names max attempts, backoff, and retryable error classes.
+- CR-4.6 [advisory] Repeated failures trip a circuit breaker.
+- CR-4.7 [review] Every acquired resource — file handle, lock, temp dir,
+  subprocess, socket, timer — has a paired release on every exit path,
+  including error and early return. Cancellation propagates through layered
+  calls via the language's cancellation mechanism (the binding names it).
+  Acquisition and release live in the same scope.
+- CR-4.8 [review] Fail-fast vs collect-all over concurrent operations is a
+  recorded decision — partial-failure behavior named, never defaulted.
+
+## 5. Language & Runtime Mechanics
+
+- CR-5.1 [review] Time: UTC internally; ISO 8601 with offset at
+  boundaries; no naive date arithmetic across DST boundaries; durations
+  are numbers with unit-suffixed names (timeoutMs, ttlSeconds equivalents).
+  Monotonic clock for durations; wall clock only for instants.
+- CR-5.2 [review] Numbers & money: no binary float where exactness
+  matters — integer minor units or a decimal type. Finite-check at numeric
+  boundaries. Beyond the language's safe-integer range, use its arbitrary-
+  precision type.
+- CR-5.3 [review] Comments explain WHY, never WHAT. No commented-out
+  code — VCS is history. No TODO/FIXME without a tracked issue reference.
+- CR-5.4 [review] No print-debugging in committed code; structured logger
+  (stderr in CLIs). No PII in logs — IDs, not personal payloads. Log level
+  matches severity — no info-level noise on routine completion; snippet
+  sizes capped on logged bodies.
+- CR-5.5 [review] Dependency versions pinned via the ecosystem's lockfile,
+  verified in CI; no floating ranges. A new runtime dependency carries a
+  one-sentence recorded justification; prefer platform/stdlib APIs. This is
+  the single dependency rule.
+- CR-5.6 [review] Module and import hygiene per the binding: one blessed
+  module system / import style, stdlib imports distinguishable, no
+  deep-reach imports across package boundaries.
+
+## 6. API / Service Layer
+
+- CR-6.1 [review] The handler layer has no business logic and never
+  touches persistence. The service layer has no transport knowledge.
+- CR-6.2 [review] Every handler declares an explicit typed response shape;
+  no raw or untyped map/dict responses.
+- CR-6.3 [review] Distinct error classes map to distinct, documented
+  status codes — validation, missing, dependency-failure, business-rule,
+  auth (e.g. 422 / 404 / 503 / 409 / 401–403). One centralized
+  error→response mapping point; handlers never catch for transport mapping.
+- CR-6.4 [review] Cross-cutting concerns go through the framework's
+  injection mechanism; handlers do not instantiate services directly.
+  Middleware handles only cross-cutting concerns, never business logic.
+- CR-6.5 [review] Request shape: identity in path params,
+  filter/pagination in query params, mutations in the body.
+- CR-6.6 [review] Nothing grows without a ceiling, and no ceiling without
+  a policy. List endpoints accept limit/offset or a cursor with an enforced
+  maximum — no unbounded list responses. The same rule applies to any
+  accumulator: in-memory buffer, queue, retry set, cache, recursion depth.
+  Each declares BOTH a bound AND what happens at the bound — block
+  (backpressure), reject with a typed error, or drop with a counted signal.
+  A bound without an overflow behavior is documentation, not behavior;
+  unbounded anything is a denial-of-service on yourself.
+- CR-6.7 [review] No blocking IO inside async/event-loop execution
+  contexts; blocking variants are CLI-only. (Bindings for runtimes without
+  an event loop mark this not_applicable with the reason.)
+- CR-6.8 [review] Fire-and-forget background work is only for non-critical
+  side effects (telemetry, notifications). Anything whose result must be
+  confirmed goes through a task queue.
+- CR-6.9 [review] A state change and its dependent external effect never
+  share a database transaction. Either both commit together through a
+  transactional outbox, or the effect runs after commit and is idempotent
+  (CR-6.10). An external call inside the state-change transaction couples
+  your commit latency and failure domain to someone else's availability.
+- CR-6.10 [review] Every mutation is safe to repeat. A request retried, or
+  a mutating command re-run, produces one effect, not two: an idempotency
+  key, a natural unique constraint, or convergent (declarative) semantics
+  guarantees it. Running a create/migrate/sync twice converges — it does
+  not duplicate or error on the second run.
+- CR-6.11 [review] Concurrency on shared state: load-and-lock (or
+  compare-and-set in the write predicate) so two racing writers cannot
+  both win. The losing writer receives a typed outcome, not a silent
+  overwrite.
+
+## 7. Data Access
+
+- CR-7.1 [review] No SELECT *; parameterized queries only.
+- CR-7.2 [review] Dynamic ordering uses a column whitelist; client-supplied
+  sort/filter never interpolates into SQL.
+- CR-7.3 [review] Transaction boundaries are explicit and as short as
+  correctness allows: consistency-critical reads and writes are grouped in
+  one transaction; no external IO inside a DB transaction (CR-6.9). No N+1
+  query patterns; queries on unindexed columns require justification.
+- CR-7.4 [review] Soft-delete tables filter deleted_at IS NULL by default.
+- CR-7.5 [review] Connection pool size is explicit; pool exhaustion
+  returns a typed error. Migrations are forward-only and do not break
+  existing APIs.
+- CR-7.6 [advisory] Isolation level documented per operation class; for
+  bulk inserts with concurrent readers, state whether partial visibility
+  is acceptable.
+- CR-7.7 [review] File writes are atomic: write to a temp path, fsync,
+  then rename over the target (rename is atomic on POSIX). A process
+  killed mid-write never leaves a reader a truncated or partial file.
+
+## 8. Security & Secrets
+
+- CR-8.1 [review] Input length limits on arguments, file reads, and
+  request fields. (Boundary validation itself is CR-4.3.)
+- CR-8.2 [review] Every non-public endpoint requires an auth check. No
+  route is accidentally public.
+- CR-8.3 [review] Explicit CORS allowlist; wildcard CORS on a credentialed
+  API is a vulnerability.
+- CR-8.4 [advisory] Every public endpoint defines a rate limit. Mutation
+  endpoints support idempotency keys (see CR-6.10).
+- CR-8.5 [review] No secret in version control, logs, tracebacks,
+  responses, event stream, or history. Secrets are read once at startup
+  via the settings module and never leave the server. This is the single
+  secrets rule.
+- CR-8.6 [review] File paths derived from external input are resolved and
+  checked against an allowed root before use; archive extraction validates
+  every entry path against the destination (zip-slip).
+- CR-8.7 [review] Subprocess arguments are passed as an argv array, never
+  string-concatenated into a shell; external data never enters a shell
+  string.
+- CR-8.8 [review] User-supplied URLs are fetched only after a scheme and
+  host allowlist check; requests to loopback, link-local, metadata, and
+  private ranges are refused unless explicitly intended.
+- CR-8.9 [review] Webhook payloads are signature-verified (constant-time
+  compare) before the body is parsed or acted on.
+
+## 9. Observability
+
+- CR-9.1 [review] Every request propagates a correlation ID end to end;
+  all logs include it.
+- CR-9.2 [review] Every service exposes a health/readiness endpoint.
+- CR-9.3 [advisory] Metrics for request count, error rate, latency, and
+  connection-pool utilization.
+- CR-9.4 [review] Wherever CR-6.6 declares a bound or CR-4.5 declares a
+  retry policy, counters exist for retries, drops, and rejects. A rejected
+  or failed command logs enough to reconstruct the decision path — which
+  check failed, on what input shape.
+
+## 10. Versioning & Contracts
+
+- CR-10.1 [review] API/contract versioning explicit from day one;
+  retroactive versioning breaks clients.
+- CR-10.2 [review] Documented contracts — CLI flags, persisted schemas,
+  file formats, API shapes — never change silently: identify the contract,
+  bump its documented version, ship a migration note.
+- CR-10.3 [advisory] Deprecated endpoints declare a sunset header.
+
+## 11. Cross-Cutting Hygiene
+
+- CR-11.1 [review] Errors surface as structured stderr + nonzero exit code
+  (CLI) or a consistent { detail, code } shape (API). Stack traces are
+  debug-only, never client-visible.
+- CR-11.2 [review] Clean shutdown: on SIGTERM, stop accepting new work,
+  let in-flight work finish within a deadline, then close connections and
+  release resources.
+
+## 12. CLI Contract
+
+Applies when the artifact is a command-line tool.
+
+- CR-12.1 [review] Exit codes are a documented contract: 0 success,
+  distinct nonzero codes for distinct failure classes, stable across
+  versions. Never exit 0 on failure; never collapse every failure to 1
+  when callers need to distinguish them.
+- CR-12.2 [review] stdout carries data only — the machine-readable answer,
+  nothing else. All logs, progress, prompts, and errors go to stderr, so
+  `tool | consumer` composes cleanly. A --json/--quiet mode emits only the
+  payload on stdout.
+- CR-12.3 [review] Read stdin when piped; prompt only when interactive.
+  Check TTY-ness before any interactive prompt — a tool that blocks on a
+  prompt inside a pipe hangs forever. Non-interactive contexts fail with a
+  clear message instead of waiting.
+- CR-12.4 [review] On SIGINT/SIGTERM, in-flight work either completes
+  atomically or rolls back cleanly — no half-written state — and the
+  terminal is restored (cursor shown, raw mode cleared) on every exit path.
+- CR-12.5 [review] --help and --version always work and never error. A
+  parse failure prints usage to stderr and exits nonzero, telling the user
+  what was expected.
+
+## 13. Generation Density (anti-slop)
+
+Code can satisfy every rule above and still rot a codebase through
+volume: ceremony abstractions, defense against impossibilities,
+speculative configurability. These rules bound that axis. Comment
+discipline stays CR-5.3's; boundary validation stays CR-4.3's — this
+section does not restate owned relations, it cites them.
+
+- CR-13.1 [review] Abstraction earns existence. No interface / protocol /
+  base class with exactly one implementation unless it is a declared
+  boundary port (CR-1.6); no helper with one caller unless it names a
+  domain concept the call site cannot; no module or function whose only
+  job is forwarding. Inline is the default; extract on the second caller
+  or a nameable concept, not before.
+- CR-13.2 [review] No speculative generality. No parameter taking one
+  value across all call sites; no configuration for values nothing
+  varies; no registry/plugin machinery for a single case; no hook for a
+  future nobody stated. Carry-cost is permanent; delete-cost is a diff.
+- CR-13.3 [review] No defense against the impossible. No recoverable-
+  failure handling around code that cannot fail recoverably (CR-2.15
+  owns the taxonomy); no absence guard on a value the type system proves
+  present (CR-2.5 owns justified suppressions); no re-validation inward
+  of the boundary (CR-4.3 validated it once). A redundant guard is not
+  safety — it hides the real invariant and teaches readers to distrust
+  the types.
+- CR-13.4 [review] Density matches the exemplar. Each binding names at
+  least one exemplar file; generated code matches its abstraction and
+  comment density. Where output diverges from the exemplar's shape, the
+  exemplar wins unless the divergence is argued in the task record. (A
+  missing exemplar is recorded in the binding as OWED, not silently
+  skipped.)
+- CR-13.5 [review] The diff is as small as its slice allows. No drive-by
+  refactors, no reformatting of untouched lines, no renames bundled with
+  behavior (the fast-path ladder in Enforcement model governs the
+  exemptions); improvements outside the slice go to the rot-ledger, not
+  into the diff.
+
+proof (CR-13.1–13.5): a density-focused review verdict on the diff (a
+review pass that checks §13 explicitly). There is
+deliberately no [auto] tier here — density is judgment, which is exactly
+why the exemplar anchor (CR-13.4) exists instead of a linter.
+
+---
+
+## Stack section: PostgreSQL (language-independent; delete if not used)
+
+- CR-P.1 [review] timestamptz, never timestamp; server and sessions run
+  UTC.
+- CR-P.2 [review] For partitioned tables the partition key appears in
+  every predicate; a query that scans all partitions requires
+  justification.
+- CR-P.3 [advisory] Prefer a natural unique constraint with ON CONFLICT as
+  the idempotency mechanism (CR-6.10) before building idempotency-key
+  tables.

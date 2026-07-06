@@ -1,0 +1,321 @@
+# binding-php v0.4
+
+parent: coding-rules-master v0.4. Load this file WITH the master; this file
+supplies mechanism and idiom, the master supplies the obligation. Every
+CR-token from the master appears below or in not_applicable.
+
+Target: PHP 8.3+, strict_types declared in every file, PHPStan level max
+(10) + strict-rules clean. On a legacy codebase without static analysis,
+the [auto] rows below are a TARGET adopted via the Y.1 baseline ratchet,
+and read as [review] until the toolchain is actually wired.
+
+## Toolchain (the [auto] promotions)
+
+declare strict_types=1 in every file (CI grep / CS-Fixer)      → CR-2.1
+PHPStan 2.x at level 10 (implicit-mixed detection)             → CR-2.1 CR-2.2
+phpstan-strict-rules (no loose ==, no empty, no unset-variable
+  reads, strict function calls)                                → CR-2.10 L-1
+phpstan-deprecation-rules                                      → CR-10.2 support
+PHP-CS-Fixer, PSR-12 + risky — or Pint on Laravel (LV.1)       → CR-2.19 CR-5.6
+composer.lock committed; CI runs composer install (never
+  update); composer audit in CI                                → CR-5.5
+PHPUnit 10+ (Pest on Laravel, LV.1); PSR-20 injected clock;
+  Random\Randomizer with a seeded engine                       → CR-3.11
+match-over-enum exhaustiveness proven by PHPStan               → CR-2.14
+
+Rules promoted above are [auto] once the toolchain is wired; a red run is
+the violation. Everything else below is [review].
+
+## Bindings (mechanism + idiom per master rule)
+
+Architecture:
+- CR-1.1 CR-1.2 CR-1.3 CR-1.5 CR-1.7 CR-1.10 as stated in master.
+- CR-1.4: no mutable static properties, no global keyword or GLOBALS
+  superglobal, no side effects at include time — a PHP file declares
+  symbols OR executes side effects, never both (PSR-1); singletons exist
+  only as container entries at the composition root.
+- CR-1.6: constructor injection via promoted constructor properties;
+  contracts are interfaces; a one-method dependency is a Closure with a
+  PHPStan callable signature.
+- CR-1.8: the constructor does no IO; a factory that must (connect,
+  open) is a public static method named connect/open returning self.
+- CR-1.9: behavior lives in classes; data is final readonly class
+  records with closed variants per CR-2.13.
+
+Types:
+- CR-2.1: strict_types per file + PHPStan level 10 + strict-rules is the
+  strictness ceiling; native types on every property, parameter, and
+  return.
+- CR-2.2: the unrestricted escape hatch is mixed (and untyped arrays) —
+  allowed only at true boundaries, immediately narrowed; level 10 flags
+  implicit mixed [auto].
+- CR-2.3: every phpstan-ignore names its error identifier and carries a
+  justifying comment; blanket ignores and narrowing var-docblock
+  overrides without a reason are banned.
+- CR-2.4: no laundering through serialize/unserialize, a json
+  round-trip, or array/object casts to defeat the analyser.
+- CR-2.5: the absence-suppression forms are an assert-non-null and a
+  narrowing var docblock — each requires a justifying comment or an
+  immediately preceding runtime check that throws.
+- CR-2.6: external data enters as mixed/string/array, is validated at
+  the boundary, and crosses inward as typed objects.
+- CR-2.7: closed sets are backed enums (8.1+) — string-backed for wire
+  values; no magic strings where an enum exists.
+- CR-2.8: framework request/validation models (FormRequest, Yii2 form
+  models with rules) are boundary-only; the domain layer never imports
+  framework validation classes.
+- CR-2.9: public methods carry native parameter and return types [auto:
+  PHPStan missing-type rules]; generics via template/param docblocks,
+  PHPStan-checked (see floor deviations).
+- CR-2.10: catch clauses name concrete exception types; never an empty
+  catch — log, rethrow with the previous-exception argument, or convert.
+  [8.5+] the NoDiscard attribute on must-consume returns; a void cast
+  marks an intentional discard.
+- CR-2.11: no null return where an error belongs. "Not found" is either
+  a domain question (return nullable, name it find-something) or an
+  error (throw NotFoundException, name it get-something) — pick per
+  call-site semantics, never both.
+- CR-2.12: final readonly class for records; class constants for fixed
+  values; withers return new instances. [8.4+] asymmetric private-set
+  visibility; [8.5+] clone-with for withers. FLOOR DEVIATION (see
+  below): readonly is shallow and init-once.
+- CR-2.13: closed variants are final readonly classes implementing one
+  interface documented as closed (sealed by convention), each carrying a
+  backed-enum kind tag; payload-free variant sets are a bare enum.
+- CR-2.14: match (never switch) over the enum tag with NO default arm —
+  PHPStan proves exhaustiveness at analysis time and UnhandledMatchError
+  crashes at runtime if a case is missed [auto]. Non-enum discrimination
+  (match-true over instanceof arms) gets a default arm that throws
+  LogicException "unreachable".
+- CR-2.15: failure taxonomy binds to typed exceptions — the native
+  mechanism: each module/domain defines a small hierarchy rooted in one
+  base (a StorageException extending RuntimeException, and so on),
+  thrown with context, caught NARROWLY at the layer that can act; public
+  functions document their throw set with a throws docblock. Programmer
+  errors and violated invariants throw LogicException (or fail an
+  assert) and crash. Wrapping a bug in a domain exception is as wrong as
+  letting a recoverable failure escape untyped. (Result libraries are
+  NOT used — they fight the ecosystem; the invariant is carried by the
+  hierarchy + narrow catches + documented throw sets.)
+- CR-2.16: where a schema exists (JSON Schema, OpenAPI), types are
+  generated or the payload is schema-validated at the boundary
+  (opis/json-schema) and mapped to typed objects; never json_decode then
+  blind property-poking on stdClass; decoding uses JSON_THROW_ON_ERROR.
+- CR-2.17: boundary shapes are named final readonly classes (or PHPStan
+  array-shape types at internal seams); derived shapes via explicit
+  converter methods, never field-by-field duplication.
+- CR-2.18: shared-nothing FPM has no in-process concurrency by default;
+  where concurrency appears — curl_multi, amphp/Fibers, pcntl forks,
+  queued jobs — every handle/future/child is joined and its failure
+  observed; a queued job whose failure vanishes is a defect (a failed-
+  job store + handler is mandatory).
+- CR-2.19: PSR-1/PSR-12 [auto: CS-Fixer/Pint]: camelCase
+  methods/properties, PascalCase classes, UPPER_SNAKE constants; boolean
+  prefix is/has/can/should.
+
+Testing — CR-3.1 CR-3.2 CR-3.3 CR-3.4 CR-3.5 CR-3.6 CR-3.7 CR-3.8 CR-3.9
+CR-3.10 CR-3.12 as stated in master (proof line applies verbatim).
+- CR-3.11: injected PSR-20 ClockInterface — never the time function or a
+  now-constructed DateTimeImmutable in domain code; Random\Randomizer
+  with a seeded engine, never the global mt_rand/rand; no real network;
+  no sleep/usleep synchronization.
+
+IO & resilience:
+- CR-4.1: Guzzle/Symfony HttpClient with EXPLICIT connect_timeout AND
+  timeout — Guzzle defaults to no timeout; raw streams set a stream
+  context timeout; subprocess deadlines are enforced by the caller
+  (proc_open + stream_select with a deadline).
+- CR-4.2 CR-4.3 CR-4.4 as stated; boundary decoding is json_decode in
+  associative mode with JSON_THROW_ON_ERROR, then validation.
+- CR-4.5: full jitter — a random float in [0,1) times min of
+  (base times 2^n, max); policy names attempts, backoff, retryable
+  exception classes.
+- CR-4.6 [advisory] as stated.
+- CR-4.7: try/finally is the release mechanism — acquisition and its
+  paired finally-release in the same scope; destructors are NOT a
+  release strategy (GC timing is unobservable). Cancellation: FLOOR
+  DEVIATION (see below) — the request/job is the cancellation scope;
+  every outbound call carries its own timeout (CR-4.1) and long work
+  moves to queued jobs with declared timeouts.
+- CR-4.8: fail-fast vs collect-all over a curl_multi batch or job fan-out
+  is the recorded decision — partial-failure behavior named, never
+  defaulted.
+
+Runtime mechanics:
+- CR-5.1: DateTimeImmutable ONLY (mutable DateTime is banned); UTC
+  internally (default timezone set to UTC at entry); hrtime for
+  durations; suffixes timeoutMs / ttlSeconds.
+- CR-5.2: integer minor units or BCMath/decimal for money; is_finite at
+  float boundaries; PHP int is 64-bit — beyond it, BCMath/GMP.
+- CR-5.3 as stated.
+- CR-5.4: PSR-3 structured logger (Monolog), configured once at entry;
+  STDERR in CLIs; no var_dump/print_r/echo debugging in committed code.
+- CR-5.5: composer.lock committed; CI runs composer install (never
+  update) + composer audit; a new dependency carries a one-sentence
+  justification; prefer stdlib/SPL.
+- CR-5.6: PSR-4 autoloading, one class per file, use-statement imports
+  (no inline fully-qualified names sprinkled through code); require/
+  include never load class files (config/bootstrap only); no reaching
+  into another package's internal namespace.
+
+Service layer — CR-6.1 CR-6.2 CR-6.3 CR-6.4 CR-6.5 CR-6.8 CR-6.9 CR-6.10
+CR-6.11 as stated in master (framework mechanics in the stack sections):
+- CR-6.6: the PHP-native accumulator hazard is the array grown in a loop
+  over external input — every such array declares a bound and an
+  overflow behavior; DB reads are chunked/batched, never an unbounded
+  fetch-all over external cardinality; queue depth and backpressure per
+  stack section.
+- CR-6.7: classic PHP-FPM/CLI has no event loop — process-per-request is
+  the isolation model and blocking IO is the norm. The rule binds with
+  full force the moment a long-running event-loop runtime (Octane,
+  Swoole, ReactPHP, amphp) is adopted: no blocking IO in the loop worker.
+
+Data access — CR-7.1 CR-7.2 CR-7.3 CR-7.4 CR-7.5 CR-7.6 CR-7.7 as stated:
+- CR-7.1: PDO prepared statements or the framework query builder with
+  bound params; string interpolation never touches SQL.
+- CR-7.7: tempnam in the target's directory → write → fsync the handle
+  (core since 8.1) → close → rename over the target (atomic on POSIX,
+  same filesystem).
+
+Security — CR-8.1 CR-8.2 CR-8.3 CR-8.4 CR-8.5 CR-8.9 as stated:
+- CR-8.6: realpath the candidate (false result = refuse), then a
+  str_starts_with prefix check against the allowed root before any fs
+  call; ZipArchive/PharData extraction validates every entry path
+  against the destination.
+- CR-8.7: subprocesses via proc_open with an ARRAY command (7.4+; argv
+  semantics, no shell involved); the shell-string execution functions
+  are banned with external data; shell-arg escaping is a last resort,
+  not a strategy.
+- CR-8.8: parse_url + scheme+host allowlist; resolve and refuse
+  loopback/link-local/metadata/private ranges before the request;
+  redirects disabled or re-checked per hop.
+- CR-8.9: hash_equals for signature comparison.
+
+Observability — CR-9.1 CR-9.2 CR-9.3 CR-9.4 as stated; correlation ID
+bound once into a Monolog processor; every log record carries it.
+Versioning — CR-10.1 CR-10.2 CR-10.3 as stated.
+Hygiene — CR-11.1 CR-11.2 as stated; FPM owns the web request lifecycle;
+long-running CLI workers install pcntl_signal handlers for SIGTERM/SIGINT
+→ stop intake → drain with deadline → close.
+CLI — CR-12.1 CR-12.2 CR-12.3 CR-12.4 CR-12.5 as stated:
+- CR-12.3: stream_isatty on STDIN gates prompts.
+- exit-code table is a backed enum (CR-2.7); one exit call site in the
+  entry script, everything else throws upward.
+
+Generation density — CR-13.2 CR-13.5 as stated in master:
+- CR-13.1 idiom: no interface with exactly one implementation outside
+  declared ports (CR-1.6); no Manager/Helper/Service class that only
+  forwards; no getter/setter pairs over readonly promoted properties;
+  no one-caller private method that names nothing the call site doesn't.
+  [8.4+] property hooks replace accessor ceremony.
+- CR-13.3 idiom: no try/catch around code whose documented throws set is
+  empty (CR-2.15 owns the throw-set discipline); no not-null guard on a
+  non-nullable native type — the engine already raises TypeError
+  (CR-2.5 prices the assert form); no re-validation inward of the
+  boundary that validated (CR-4.3).
+- CR-13.4 exemplar: EXEMPLAR SLOT — name at least one reference file from
+  YOUR codebase and anchor density review on it; until one is named,
+  record the gap as OWED per CR-13.4 and anchor on the master rule text
+  alone.
+
+PostgreSQL — CR-P.1 CR-P.2 CR-P.3 as stated (PDO pgsql returns
+timestamptz as offset strings — construct DateTimeImmutable from them,
+UTC-normalized, at the data-access boundary).
+
+## Language-only rules
+
+- L-1 [auto: phpstan-strict-rules] No loose comparison (double-equals),
+  no empty construct, no truthiness checks on strings/numbers where a
+  precise comparison exists.
+- L-2 [review] Final by default: classes are final unless designed and
+  documented for extension; polymorphism via interfaces + composition,
+  not inheritance chains.
+- L-3 [review] No new magic: the magic get/set/call methods live only in
+  framework base classes you don't own; new code exposes real,
+  analyzable properties and methods.
+- L-4 [review] An array crossing a public boundary carries a PHPStan
+  shape (array-shape, list-of, keyed-array types) or becomes a value
+  object; an untyped array on a public surface is a defect.
+
+## Version-gated mechanisms (adopt on upgrade; floor is 8.3)
+
+- [8.4+] asymmetric visibility private-set/protected-set → CR-2.12;
+  property hooks → CR-13.1 (accessor ceremony deleted).
+- [8.5+] the NoDiscard attribute + void cast → CR-2.10/CR-2.18
+  (must-consume returns); clone-with → CR-2.12 withers on readonly
+  classes.
+
+## Floor deviations (recorded — accepted 2026-07-06)
+
+- CR-2.1 strictness: strict_types is per-file opt-in — a missing declare
+  silently reverts that file to weak mode; enforced by lint/grep, not
+  the engine. Generics are PHPDoc-only (PHPStan-checked, erased at
+  runtime). Lower than TS; recorded.
+- CR-2.12 immutability: readonly is shallow and init-once — objects held
+  by readonly properties remain internally mutable, and there are no
+  readonly collections; deep immutability is convention + review.
+- CR-2.13/2.14 closed variants: no native sum types or sealing — the
+  variant interface is closed by convention (final classes + doc);
+  exhaustiveness is PROVEN only where match runs over a backed-enum tag;
+  instanceof discrimination falls back to a throwing default. Lower than
+  TS switch-exhaustiveness / mypy assert_never; recorded.
+- CR-2.15 mechanism: typed exceptions, not Result — the throw set is
+  documented convention (throws docblocks), analyser-verified only if
+  PHPStan checkedExceptions is configured. Same posture as Python;
+  compensated by narrow catches and the hierarchy-per-module rule.
+- CR-4.7 cancellation: no cooperative cancellation primitive in the FPM
+  model — the request/job IS the cancellation scope; compensated by
+  mandatory per-call timeouts (CR-4.1) and job-level timeouts. Lower
+  than Go context / AbortSignal; recorded.
+
+## Stack section: Yii2 (delete if not used)
+
+- Y.1 [review] PHPStan runs with the yii2-extensions/phpstan package (or
+  erickskrauch/phpstan-yii2) so ActiveRecord/ActiveQuery magic is typed.
+  Legacy adoption is a RATCHET: a committed PHPStan baseline that only
+  shrinks; new and touched code analyzes clean at the full level; the
+  baseline never grows.
+- Y.2 [review] ActiveRecord IS the data-access layer (CR-1.10): AR
+  classes carry no business branching; services receive and return
+  domain values; controllers never build queries.
+- Y.3 [review] AR attribute magic is contained: property docblocks
+  complete per column (the phpstan extension consumes them); the rules
+  declaration on form/request models is the boundary validation (CR-4.3)
+  — domain objects are not AR instances.
+- Y.4 [review] DI is configured at the composition root (container /
+  app config); service location through the Yii app locator inside
+  domain code violates CR-1.6.
+- Y.5 [review] Massive assignment is scoped: safe attributes explicit
+  per scenario; the load method never feeds unfiltered request data into
+  a model with unsafe attributes (CR-4.3's framework face).
+- Y.6 [review] Transactions use the closure form (the connection's
+  transaction method taking a closure) so commit/rollback pairing holds
+  by construction (CR-7.3); no external IO inside the closure (CR-6.9).
+
+## Stack section: Laravel (delete if not used)
+
+- LV.1 [review] Toolchain: Pint (style), Larastan (PHPStan with
+  Eloquent/Facade inference) at the max supported level, Pest — these
+  carry the [auto] promotions above on Laravel projects.
+- LV.2 [review] FormRequest is the boundary validation (CR-4.3); the
+  validated output crosses inward as typed DTOs (readonly classes /
+  spatie laravel-data); nothing reads the raw request deeper in.
+- LV.3 [review] No facades in domain code — constructor injection
+  (CR-1.6); facades are framework-edge only (controllers, commands,
+  providers).
+- LV.4 [review] Eloquent stays in the data-access layer (CR-1.10); no
+  queries in controllers or views; Model strict mode on in
+  non-production (prevents lazy loading = N+1 guard, CR-7.3; silently
+  discarded attributes; accessing missing attributes).
+- LV.5 [review] Queued jobs are idempotent (CR-6.10), declare tries +
+  backoff (full jitter, CR-4.5) and a failed-job handler that logs the
+  decision path (CR-9.4); jobs dependent on a DB transaction dispatch
+  afterCommit (CR-6.9).
+- LV.6 [review] The env helper is read only inside the config directory;
+  everything else reads the config helper — config caching makes stray
+  env reads return null (CR-1.5's framework face).
+
+## not_applicable
+
+(none — every master rule binds in PHP; CR-6.7 binds conditionally on the
+runtime model, stated inline at the rule)

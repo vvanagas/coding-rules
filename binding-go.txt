@@ -1,0 +1,217 @@
+# binding-go v0.4
+
+parent: coding-rules-master v0.4. Load this file WITH the master; this file
+supplies mechanism and idiom, the master supplies the obligation. Every
+CR-token from the master appears below or in not_applicable.
+
+## Toolchain (the [auto] promotions)
+
+go vet + golangci-lint with:
+  errcheck (no ignored error return)                           → CR-2.10
+  exhaustive (const-enum switch coverage)                      → CR-2.14 (partial)
+  staticcheck                                                  → CR-2.1
+  gosec                                                        → CR-8.x support
+  noctx (no HTTP without context)                              → CR-4.7
+  bodyclose, sqlclosecheck, rowserrcheck                       → CR-4.7
+  gochecknoglobals, gochecknoinits                             → CR-1.4
+  forbidigo (fmt.Print* outside main/CLI output paths)         → CR-5.4
+govulncheck in CI                                              → CR-5.5 support
+go.mod + go.sum committed; versions exact by construction      → CR-5.5
+goleak in tests (no leaked goroutines)                         → CR-2.18 support
+Test runner: go test; -race in CI                              → CR-6.11 support
+
+Rules promoted above are [auto]; a red linter is the violation. Everything
+else below is [review].
+
+## Bindings (mechanism + idiom per master rule)
+
+Architecture:
+- CR-1.1 CR-1.2 CR-1.3 CR-1.5 CR-1.7 CR-1.10 as stated in master.
+- CR-1.4: no package-level `var` mutables, no `init()` side effects
+  [auto: gochecknoglobals, gochecknoinits]; no import cycles (compiler).
+- CR-1.6: constructor injection via `New*` functions taking interfaces;
+  define interfaces where they are CONSUMED, not where implemented; keep
+  them small (1–3 methods). A one-method dependency is a func type.
+- CR-1.8: `New*` does no IO; a factory that must do IO is named
+  `Connect*`/`Open*` and returns (T, error).
+- CR-1.9: structs with methods for identity+behavior; data is plain
+  structs; closed variants per CR-2.13 below.
+
+Types:
+- CR-2.1: staticcheck + vet is the strictness ceiling; Go has no optional
+  strict mode beyond it.
+- CR-2.2: `interface{}` / `any` only at true boundaries, immediately
+  narrowed; never in exported signatures except marshal/unmarshal edges.
+- CR-2.3: every `unsafe` use and every type assertion without the
+  `, ok` form carries a justifying comment.
+- CR-2.4: no laundering through `unsafe.Pointer` or serialize/deserialize
+  round-trips to defeat the type system.
+- CR-2.5: the single-value type assertion `v := x.(T)` (panic on miss) is
+  the null-suppression equivalent — comma-ok form by default; bare form
+  needs a comment.
+- CR-2.6: external data lands in `[]byte`/`any`, is decoded and validated
+  at the boundary, and crosses inward as a concrete struct.
+- CR-2.7: closed sets are typed constants (`type Status string` + `const`
+  block); no naked string literals where a typed const exists.
+- CR-2.8: decode/validation structs (json tags, validate tags) are
+  boundary-only; domain structs carry no transport tags.
+- CR-2.9: exported identifiers have explicit types by language rule;
+  interfaces document behavior contracts in doc comments.
+- CR-2.10: EVERY error return is checked [auto: errcheck]; handle once —
+  wrap with `fmt.Errorf("...: %w", err)` going up, log at the top only.
+  Never `_ = err` without a comment.
+- CR-2.11: return `(zero, error)`, not a nil that the caller must divine;
+  a nil-able return that means "not found" is a named sentinel
+  (`ErrNotFound`) checked with `errors.Is`.
+- CR-2.12: FLOOR DEVIATION (see below) — no const structs; discipline is
+  value semantics for small structs, pointer receivers only when mutating,
+  no exported mutable package state.
+- CR-2.13: closed variants are a sealed interface (unexported method) with
+  one struct per variant; the tag is the concrete type.
+- CR-2.14: FLOOR DEVIATION (see below) — type-switch over the sealed
+  interface with a `default:` that panics ("unreachable: %T"); `exhaustive`
+  linter covers const-enum switches only.
+- CR-2.15: failure taxonomy binds to errors-as-values — the native
+  mechanism: recoverable failures are typed error values (sentinel `Err*`
+  vars or typed error structs) checked with `errors.Is`/`errors.As`;
+  `panic` only for programmer errors and violated invariants; `recover`
+  only at a goroutine/process boundary to convert a bug into a crash
+  report, never into control flow.
+- CR-2.16: where a schema exists (JSON Schema, protobuf, sqlc), the Go
+  type is GENERATED from it, never hand-written beside it; no blind
+  `json.Unmarshal` into `map[string]any` then cast.
+- CR-2.17: boundary structs are named; derived shapes via embedding or
+  explicit conversion functions, never field-by-field duplication.
+- CR-2.18: every goroutine has a defined owner and stop condition; results
+  and errors are joined via `errgroup`, channels, or `sync.WaitGroup` +
+  error collection; a goroutine whose failure vanishes is a defect
+  [supported by goleak in tests].
+- CR-2.19: MixedCaps, no underscores; exported = documented; boolean
+  fields/funcs read as assertions (IsReady, HasNext, CanRetry).
+
+Testing — CR-3.1 CR-3.2 CR-3.3 CR-3.4 CR-3.5 CR-3.6 CR-3.7 CR-3.8 CR-3.9
+CR-3.10 CR-3.12 as stated in master (proof line applies verbatim).
+- CR-3.11: inject clocks (a `Clock` interface or func); seed randomness;
+  `t.Parallel()` only for tests without shared state; no `time.Sleep`
+  synchronization — synchronize on channels.
+
+IO & resilience:
+- CR-4.1: `http.Client{Timeout: ...}` or per-request
+  `context.WithTimeout`; `net.Dialer` connect timeouts explicit;
+  `exec.CommandContext` for subprocesses.
+- CR-4.2 CR-4.3 CR-4.4 as stated; decoding uses
+  `json.Decoder.DisallowUnknownFields()` at strict boundaries.
+- CR-4.5: `rand.Float64() * min(base * math.Pow(2, n), max)`; policy names
+  attempts, backoff, retryable error classes (`errors.Is` sets).
+- CR-4.6 [advisory] as stated.
+- CR-4.7: cancellation is `context.Context`, FIRST parameter of every
+  function that does IO or can block, propagated unbroken; release is
+  `defer` on the line after acquisition — same scope by construction;
+  `defer cancel()` immediately after `WithTimeout`/`WithCancel`.
+- CR-4.8: `errgroup.Group` (fail-fast) vs collect-all loop is the recorded
+  decision.
+
+Runtime mechanics:
+- CR-5.1: `time.Time` is UTC internally; `time.Since`/`time.Until` use the
+  embedded monotonic clock for durations; wall clock only for instants;
+  `time.Duration` typed values, not raw ints.
+- CR-5.2: integer minor units or `math/big`/shopspring decimal;
+  `math.IsInf`/`IsNaN` checks at float boundaries.
+- CR-5.3 as stated.
+- CR-5.4: structured logger is `log/slog`; stderr in CLIs; no `fmt.Println`
+  debugging in committed code.
+- CR-5.5: go.mod/go.sum are the lockfile [auto by toolchain]; new
+  dependency carries a one-sentence justification; prefer stdlib.
+- CR-5.6: import groups stdlib / external / internal (gci or goimports);
+  `internal/` packages enforce reach boundaries (compiler-checked); no
+  dot-imports.
+
+Service layer — CR-6.1 CR-6.2 CR-6.3 CR-6.4 CR-6.5 CR-6.8 CR-6.9 CR-6.10
+CR-6.11 as stated in master:
+- CR-6.3: one error→status mapping function; handlers return errors, the
+  outer handler wrapper maps them.
+- CR-6.6: the native bounded buffer is the bounded channel
+  (`make(chan T, n)`); the policy is explicit at every send site — blocking
+  send = backpressure; `select` with `default` = drop (counted);
+  send-with-timeout = reject; capacity and policy are parameters, not
+  literals buried in mechanism.
+- CR-6.11: `-race` in CI; shared state behind a mutex with the invariant
+  documented, or CAS in the store's write predicate.
+
+Data access — CR-7.1 CR-7.2 CR-7.3 CR-7.4 CR-7.5 CR-7.6 CR-7.7 as stated:
+- CR-7.1: database/sql or pgx with placeholders; sqlc for generated typed
+  queries (also satisfies CR-2.16).
+- CR-7.7: `os.CreateTemp` in target dir → write → `f.Sync()` → `f.Close()`
+  → `os.Rename`.
+
+Security — CR-8.1 CR-8.2 CR-8.3 CR-8.4 CR-8.5 CR-8.9 as stated (gosec
+backs several):
+- CR-8.6: `filepath.Clean` + `filepath.Rel` prefix check against the
+  allowed root; archive extraction validates each entry against the
+  destination.
+- CR-8.7: `exec.Command(name, args...)` — argv-native by design; never
+  `sh -c` with external data.
+- CR-8.8: parse with `net/url`, allowlist scheme+host, resolve and refuse
+  loopback/link-local/metadata/private ranges before dialing.
+- CR-8.9: `hmac.Equal` for signature comparison.
+
+Observability — CR-9.1 CR-9.2 CR-9.3 CR-9.4 as stated; correlation ID
+travels in `context.Context` and every `slog` call includes it.
+Versioning — CR-10.1 CR-10.2 CR-10.3 as stated; module major-version rule
+(v2+ import path) is part of CR-10.2's contract surface.
+Hygiene — CR-11.1 CR-11.2 as stated; shutdown =
+`signal.NotifyContext(SIGTERM, SIGINT)` → stop intake → drain with
+deadline → close.
+CLI — CR-12.1 CR-12.2 CR-12.3 CR-12.4 CR-12.5 as stated:
+- CR-12.3: `term.IsTerminal(int(os.Stdin.Fd()))` gates prompts.
+- exit-code table is a typed const block (CR-2.7); one `os.Exit` site in
+  `main`, everything else returns errors upward.
+
+Generation density — CR-13.2 CR-13.5 as stated in master:
+- CR-13.1 idiom: consumer-side 1–3 method interfaces (CR-1.6) remain
+  correct Go; the ban targets producer-side interfaces mirroring one
+  struct 1:1, packages that only forward, and getters/setters over plain
+  exported fields. Accept-interfaces-return-structs (L-1) already
+  encodes half of this rule.
+- CR-13.3 idiom: no `recover` as control flow (CR-2.15 already bans it);
+  no nil-check on a value constructed lines above; no comma-ok read of a
+  map key just written; no err-check on a function documented to return
+  nil error unconditionally.
+- CR-13.4 exemplar: EXEMPLAR SLOT — name at least one reference file from
+  YOUR codebase and anchor density review on it; until one is named,
+  record the gap as OWED per CR-13.4 and anchor on the master rule text
+  alone.
+
+PostgreSQL — CR-P.1 CR-P.2 CR-P.3 as stated (pgx maps timestamptz to
+time.Time in UTC).
+
+## Language-only rules
+
+- L-1 [review] Accept interfaces, return structs.
+- L-2 [review] Zero values are made useful or construction goes through
+  `New*`; a struct whose zero value is invalid documents it and provides a
+  constructor.
+- L-3 [review] Channel ownership: the goroutine that creates a channel
+  closes it; receivers never close; nil channels only as deliberate
+  select-disabling.
+- L-4 [review] `context.Context` is never stored in a struct; it flows
+  through call chains only.
+
+## Floor deviations (recorded — accepted 2026-07-02)
+
+- CR-2.12 immutability: Go cannot enforce it. Floor = convention: value
+  semantics for small structs, no exported mutable package state
+  [auto: gochecknoglobals], mutation localized to owning goroutine or
+  mutex-guarded region. Lower than TS `readonly`; recorded, not papered
+  over.
+- CR-2.14 exhaustiveness: no sum types. Sealed interface + type-switch +
+  panic-default gives runtime detection, not compile-time proof;
+  `exhaustive` linter covers const-enum switches only. Lower than TS
+  switch-exhaustiveness; recorded.
+
+## not_applicable
+
+- CR-6.7 (no blocking IO in async handlers): Go has no event loop to
+  starve — goroutines block cheaply by design; the scheduler multiplexes.
+  The adjacent real hazard is covered by CR-4.7 (context propagation) and
+  CR-2.18 (no orphan goroutines).

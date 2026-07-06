@@ -1,0 +1,159 @@
+# binding-typescript v0.4
+
+parent: coding-rules-master v0.4. Load this file WITH the master; this file
+supplies mechanism and idiom, the master supplies the obligation. Every
+CR-token from the master appears below or in not_applicable.
+
+## Toolchain (the [auto] promotions)
+
+tsconfig: strict, noUncheckedIndexedAccess, noImplicitOverride,
+exactOptionalPropertyTypes, useUnknownInCatchVariables,
+verbatimModuleSyntax                                           → CR-2.1
+eslint (@typescript-eslint + core):
+  no-explicit-any                                              → CR-2.2
+  no-restricted-syntax `TSAsExpression > TSAsExpression`       → CR-2.4
+  no-restricted-syntax TSEnumDeclaration + namespace selector,
+  no-unsafe-function-type, no-restricted-types for `object`    → CR-2.7
+  explicit-module-boundary-types                               → CR-2.9
+  switch-exhaustiveness-check                                  → CR-2.14
+  no-floating-promises                                         → CR-2.18
+  prefer-nullish-coalescing, prefer-optional-chain,
+  no-restricted-syntax ForInStatement                          → L-1
+  naming-convention                                            → CR-2.19
+  no-warning-comments                                          → CR-5.3
+  no-console (allow: error)                                    → CR-5.4
+  consistent-type-imports, no-restricted-imports (node: list)  → CR-5.6
+CI: bun install --frozen-lockfile / npm ci; save-exact         → CR-5.5
+Runtime: Bun. Test runner: bun:test (fake timers, seeded PRNG) → CR-3.11
+
+Rules promoted above are [auto]; a red linter is the violation. Everything
+else below is [review].
+
+## Bindings (mechanism + idiom per master rule)
+
+Architecture — CR-1.1 CR-1.2 CR-1.3 CR-1.4 CR-1.5 CR-1.7 CR-1.10 as
+stated in master; TS-specific flesh:
+- CR-1.6: constructor injection; interface for DB/HTTP/queue/fs/clock; a
+  one-method dependency is injected as a function type.
+- CR-1.8: no async in constructors; `static async create()`.
+- CR-1.9: classes for identity+behavior; data is plain objects with
+  discriminated unions; no data-bearing classes.
+
+Types:
+- CR-2.3: unchecked `as` carries a justification comment or a runtime
+  check immediately before it.
+- CR-2.5: non-null assertion `!` requires a justifying comment.
+- CR-2.6: external data is `unknown`; narrow at the boundary.
+- CR-2.8: TypeBox/Zod schemas are boundary-only; domain never imports them.
+- CR-2.10: `catch (e: unknown)`; narrow with `instanceof Error`; never
+  empty-catch — log, rethrow, or convert.
+- CR-2.11: no `null`/`undefined` return where an error belongs; optional
+  means intentional absence.
+- CR-2.12: `readonly` fields, interface members, and array parameters by
+  default. Floor note: no lint enforces parameter readonliness — review.
+- CR-2.13: discriminated unions with a `kind`/`status` literal tag.
+- CR-2.14: exhaustive `switch`; residual to `const _: never` (or an
+  assertNever helper).
+- CR-2.15: recoverable failures return `Result<T, E>` (neverthrow, or a
+  local ok/err union in zero-dep tools) with errors as discriminated
+  unions; throw only for programmer errors and violated invariants. `Error`
+  subclasses only where `instanceof` interop is required.
+- CR-2.16: `Static<typeof S>` / `z.infer`; never schema and type declared
+  separately; never `JSON.parse(s) as T`.
+- CR-2.17: named types for module-boundary shapes; derive with
+  Pick/Omit/Partial; `interface` for extendable shapes, `type` for unions
+  and computed types.
+- CR-2.19: camelCase variables/methods, PascalCase types/classes,
+  UPPER_SNAKE_CASE module constants; boolean prefix is/has/can/should.
+
+Testing — CR-3.1 CR-3.2 CR-3.3 CR-3.4 CR-3.5 CR-3.6 CR-3.7 CR-3.8 CR-3.9
+CR-3.10 CR-3.12 as stated in master (proof line applies verbatim).
+
+IO & resilience:
+- CR-4.1 CR-4.2 CR-4.3 CR-4.4 as stated; boundary schemas are TypeBox at
+  Elysia routes, Zod at subprocess boundaries.
+- CR-4.5: `Math.random() * Math.min(base * 2 ** n, max)`.
+- CR-4.6 [advisory] as stated.
+- CR-4.7: cancellation is `AbortController` + `setTimeout`; propagate
+  `AbortSignal` through layered calls; clear the timer in `finally`;
+  acquisition and release in the same scope.
+- CR-4.8: `Promise.all` vs `Promise.allSettled` is the recorded decision.
+
+Runtime mechanics:
+- CR-5.1: `performance.now()` for durations; `Date` only for instants;
+  suffixes timeoutMs / ttlSeconds.
+- CR-5.2: integer minor units or a decimal lib; `Number.isFinite` at
+  boundaries; beyond 2^53 is `bigint`.
+- CR-5.4: structured logger; `console.error` in CLIs.
+- CR-5.6: ESM only; `import type` for types; `node:` prefix for builtins.
+
+Service layer — CR-6.1 CR-6.2 CR-6.3 CR-6.4 CR-6.5 CR-6.6 CR-6.8 CR-6.9
+CR-6.10 CR-6.11 as stated in master:
+- CR-6.6 mechanism note: route-schema `maximum`/`maxItems` promote the
+  endpoint case to [auto]; accumulators stay [review].
+- CR-6.7: no blocking IO / no `*Sync` calls inside async handlers; `*Sync`
+  is CLI-only.
+
+Data access — CR-7.1 CR-7.2 CR-7.3 CR-7.4 CR-7.5 CR-7.6 CR-7.7 as stated;
+Drizzle is the query layer; raw SQL is parameterized.
+
+Security — CR-8.1 CR-8.2 CR-8.3 CR-8.4 CR-8.5 CR-8.9 as stated:
+- CR-8.6: `path.resolve` + prefix check against the allowed root (or
+  `node:path` relative traversal check) before any fs call on external
+  input; archive entries validated per entry.
+- CR-8.7: `spawn(cmd, argvArray)`; never `shell: true` with external data;
+  never template a command string.
+- CR-8.8: URL parsed, scheme+host allowlisted; loopback/link-local/
+  metadata/private ranges refused before fetch.
+
+Observability — CR-9.1 CR-9.2 CR-9.3 CR-9.4 as stated.
+Versioning — CR-10.1 CR-10.2 CR-10.3 as stated.
+Hygiene — CR-11.1 CR-11.2 as stated (SIGTERM handler; deadline; close).
+CLI — CR-12.1 CR-12.2 CR-12.3 CR-12.4 CR-12.5 as stated; `process.stdout.
+isTTY` gates prompts; exit-code table is a `const` map (CR-2.7).
+
+Generation density — CR-13.2 CR-13.5 as stated in master:
+- CR-13.1 idiom: no `interface Foo` + single `class FooImpl` pair outside
+  declared ports (CR-1.6); no barrel files that only re-export; no `type`
+  alias that merely renames without narrowing; no one-caller arrow-func
+  extraction that names nothing the call site doesn't.
+- CR-13.3 idiom: no try/catch around synchronous pure code; no `?.` chain
+  or `!` on values typed non-nullable (CR-2.5 already prices the `!`); no
+  schema re-parse inward of the boundary that parsed it (CR-4.3).
+- CR-13.4 exemplar: EXEMPLAR SLOT — name at least one file from YOUR
+  codebase (a ~1-2k-line, zero-ceremony reference implementation: Result
+  discipline, discriminated-union errors, ports-and-adapters) and anchor
+  density review on it. Until one is named, record the gap as OWED per
+  CR-13.4 and anchor on the master rule text alone.
+
+PostgreSQL — CR-P.1 CR-P.2 CR-P.3 as stated.
+
+## Language-only rules
+
+- L-1 [auto: prefer-nullish-coalescing, prefer-optional-chain,
+  no-restricted-syntax ForInStatement] `??` over `||` for defaults, `?.`
+  over manual null chains, `for...of` over C-style, never `for...in` on
+  arrays.
+
+## Stack section: Bun + Elysia (delete if not used)
+
+- E.1 [review] A schema attached to the route (body/query/params/response)
+  is the boundary-validation mechanism (CR-4.3) — validation and response
+  typing in one declaration. No hand-rolled validation beside it.
+- E.2 [review] `onError` is the single exception→response mapping point
+  (CR-6.3). Handlers never try/catch for transport mapping.
+- E.3 [review] `derive()`/`resolve()` do no IO heavier than context lookup;
+  authn lives in `onBeforeHandle`/guards.
+- E.4 [review] No blocking IO in handlers; `spawnSync` is CLI-only
+  (CR-6.7).
+- E.5 [review] Cross-cutting via plugin/`decorate`; handlers never
+  instantiate services; no module-singleton reached from a handler.
+
+## Floor deviations (recorded)
+
+- CR-2.12: parameter readonliness has no lint; fields/members are
+  compiler-checked, parameters are review-only.
+
+## not_applicable
+
+(none — every master rule binds in TypeScript)
