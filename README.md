@@ -32,13 +32,46 @@ lint/compiler promotions:
 - **Exemplar slots (CR-13.4)**: density is judgment, so each binding anchors
   it on a named reference file from *your* codebase rather than a linter.
 
-## Using it with a coding agent
+## Quick start with a coding agent (2 minutes)
 
-Load the master + the one binding for the language at hand as
-context/skill for the agent; pin the Iron Law of TDD, the secrets rule, and
-idempotency in the agent's always-on instructions so they hold even when the
-ruleset is not loaded. Fill the exemplar slots. Run the projection check on
-every master edit.
+**Claude Code:** copy `skills/claude-code/SKILL.md` to
+`.claude/skills/coding-rules/SKILL.md` in your project and vendor the .txt
+files beside it. The agent then loads the master + the right binding per
+task, on demand.
+
+**Codex / any AGENTS.md agent:** paste the block from
+`skills/codex/AGENTS.md` into your repo's `AGENTS.md`.
+
+Either way: pin the Iron Law of TDD, the secrets rule, and idempotency in
+the agent's always-on instructions so they hold even when the ruleset is
+not loaded; fill the CR-13.4 exemplar slot in your binding with a reference
+file from YOUR codebase; run the projection check on every master edit.
+
+## Use cases
+
+1. **Drive a coding agent on real production work.** This is the origin
+   use: the ruleset's home environment builds infrastructure tooling with
+   agents writing 100% of the code under these rules — TDD evidence
+   captured, exit-code contracts designed, atomic writes by default. The
+   difference is measurable: a pre-ruleset tool audited against a controls
+   corpus showed exactly the two defect classes (exit-code overload,
+   in-place state writes) that a post-ruleset tool had already gotten right.
+2. **PR review checklist.** The tag system makes review triage mechanical:
+   if lint/typecheck is green, every `[auto]` rule is satisfied — spend
+   human attention only on `[review]` rules. §0 (the minimum set) is a
+   ten-line review card for small changes.
+3. **Adopt on a legacy codebase.** The PHP binding ships the pattern: a
+   committed analyzer baseline that only shrinks (the ratchet) — new and
+   touched code meets the full standard, old code converges over time.
+4. **Anti-slop review for agent output (§13).** Generation density rules
+   name what makes LLM code rot a codebase while passing every lint:
+   single-implementation interfaces, one-caller helpers, guards against
+   type-proven impossibilities, speculative config. Review agent diffs
+   against §13 explicitly.
+5. **Fork it as your house style.** CC BY: take the master, keep the
+   structure (tags, proof lines, projection check), swap rules you disagree
+   with, add bindings for your stack. The structure is the transferable
+   part; the projection check keeps YOUR fork honest mechanically.
 
 ## License
 
