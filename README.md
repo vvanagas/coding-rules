@@ -4,20 +4,20 @@ LLM-written code has failure modes that human code review was never
 designed to catch — it looks clean, passes lint, and rots the codebase
 anyway. This ruleset exists to kill those modes by name:
 
-| What agent-written code does | The rule that kills it |
-|------------------------------|------------------------|
-| Says "all tests pass!" without having run them | `proof:` lines — **narrated compliance counts as non-compliance**; the Iron Law demands the *captured* failing-then-passing output (CR-3.1–3.4) |
-| Writes the code first, then tests that agree with it | The Iron Law: code written before its failing test is **deleted**, not adapted (CR-3.4) |
-| Interfaces with one implementation, helpers with one caller, forwarding modules | §13 Generation Density: **abstraction earns existence** (CR-13.1) — training data over-represents ceremony, so it gets explicit counter-pressure |
-| Guards against things the type system already proves impossible | CR-13.3 — a redundant guard isn't safety; it teaches readers to distrust the types |
-| Speculative config, hooks, and parameters nobody asked for | CR-13.2 — carry-cost is permanent, delete-cost is a diff |
-| try/catch soup — every failure wrapped, none typed | CR-2.15 failure taxonomy: recoverable failures are typed and visible; bugs crash loudly — and wrapping a bug is as wrong as throwing a recoverable |
-| Retry loops around non-idempotent operations | CR-4.4: retrying a non-idempotent operation **is a correctness bug**, full stop (with full-jitter policy when retry is legal, CR-4.5) |
-| Unbounded caches, queues, buffers, recursion | CR-6.6: nothing grows without a ceiling, and no ceiling without a named overflow policy |
-| Cites lint rules that don't exist | an `[auto]` tag that names no concrete mechanism **is invalid by definition** and reads as `[review]` |
-| Python-shaped Go, Java-shaped TypeScript | the master/binding split: one language, one binding, native mechanism — the binding decides ONE failure idiom per language and says which |
-| Drive-by refactors smuggled into the diff | CR-13.5: the diff is as small as its slice allows; improvements outside the slice go to a ledger, not the diff |
-| Exit code 1 for everything | CR-12.1/12.2: exit codes are a documented contract; stdout carries data only |
+| Agent-written code tends to… | The counter-rule, in plain words |
+|------------------------------|----------------------------------|
+| say "all tests pass!" without having run them | Claims don't count; only captured output does. A behavior change needs the failing run and the passing run, pasted. No captured RED — no compliance, whatever the narration says. *(proof lines)* |
+| write the code first, then write tests that agree with it | Code written before its failing test gets **deleted** — not adapted, not kept "for reference". Start over, test-first. *(the Iron Law)* |
+| produce an interface with one implementation, a helper with one caller, a module that only forwards | Abstraction has to earn existence: inline is the default, extract on the *second* caller or a nameable domain concept — not before. *(§13 density)* |
+| null-check a value the type system already proves non-null | A redundant guard isn't safety — it hides the real invariant and teaches readers to distrust the types. *(§13)* |
+| add config for values nothing varies, and hooks for futures nobody stated | Carry-cost is permanent; delete-cost is a diff. If no call site varies it, it isn't a parameter. *(§13)* |
+| wrap everything in try/catch and type none of it | Pick ONE failure mechanism per language; recoverable failures are typed and visible at the call boundary, bugs crash loudly. Wrapping a bug is as wrong as throwing a recoverable failure. *(failure taxonomy)* |
+| retry whatever failed | Retrying a non-idempotent operation is a **correctness bug**, not a style issue. Where retry is legal: full jitter, named attempt limit, named retryable classes. *(idempotency)* |
+| grow caches, queues, and buffers without limits | Nothing grows without a ceiling — and a ceiling without a named overflow behavior (block, reject, or drop-with-a-counter) is documentation, not behavior. *(bounds)* |
+| cite a lint rule that doesn't exist | Every enforcement claim must name its real mechanism, or it downgrades to human review on the spot. Invented enforcement dies by definition. *(the `[auto]` tag)* |
+| write Python-shaped Go and Java-shaped TypeScript | One binding per language, native idiom only: the master says WHAT is owed, the binding says HOW your language actually does it. *(bindings)* |
+| reformat forty untouched lines while fixing one | The diff is as small as its slice allows; improvements outside the slice go to a ledger, not into the diff. *(minimal diff)* |
+| exit `1` for everything | Exit codes are a contract — "it's broken" and "couldn't check" never share a code — and stdout carries data only; logs go to stderr. *(CLI contract)* |
 
 **Opinionated on purpose.** The opinions are the value: TDD is
 non-negotiable with no advisory escape; each language binding picks ONE
